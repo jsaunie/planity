@@ -33,7 +33,7 @@ class Event {
     this.options = { ...options };
   }
 
-  static sortEvents (e1, e2) {
+  static sortEvents(e1, e2) {
     return e1.startAt.getTime() - e2.startAt.getTime();
   }
 
@@ -103,16 +103,16 @@ class Event {
   }
 
   setOverlappedEventIds(events) {
-    this.overlappedEventIds = [
-      ...events
-        .filter(
-          (e) =>
-            e.id !== this.id &&
-            ((this.startAt >= e.startAt && this.startAt < e.endAt) ||
-              (e.startAt >= this.startAt && e.startAt < this.endAt))
-        )
-        .map((e) => e.id),
-    ];
+    const overlapped = events
+      .filter(
+        (e) =>
+          e.id !== this.id &&
+          ((this.startAt >= e.startAt && this.startAt < e.endAt) || // Current event starts before e and ends after e
+            (e.startAt >= this.startAt && e.startAt < this.endAt)) // e starts before current event ends
+      )
+      .map((e) => e.id);
+
+    this.overlappedEventIds = [...overlapped];
 
     return this;
   }
@@ -206,7 +206,11 @@ class Events {
 
       let maxEvents = event.overlappedEventIds.length;
 
-      recursive(event.id, [], (count) => maxEvents = count > maxEvents ? count : maxEvents);
+      recursive(
+        event.id,
+        [],
+        (count) => (maxEvents = count > maxEvents ? count : maxEvents)
+      );
 
       this.update(event.id, { maxEvents });
     });
@@ -233,6 +237,10 @@ class Events {
   toArray() {
     return Object.values(this.events);
   }
+
+  reset() {
+    this.events = {};
+  }
 }
 
 class Calendar {
@@ -256,7 +264,7 @@ class Calendar {
    */
   static getTheLargestSpace(spaces = []) {
     return (spaces.length > 1
-      ? spaces.sort((e1, e2) => e2[1] - e2[0] - (e1[1] - e1[0]))
+      ? spaces.sort((s1, s2) => s1[1] - s2[1]) // ASC
       : spaces)[0]; // Take the first
   }
 
@@ -268,27 +276,26 @@ class Calendar {
    * @return {number[][]} - [start, end][]
    */
   static getAvailableSpaces(width, spaces) {
-    return spaces
-      .sort((s1, s2) => s1[1] - s2[1])
-      .reduce((acc, space, index) => {
-        // Left
-        if (
-          space[0] > 0 &&
-          (!!spaces[index - 1] ? spaces[index - 1][1] < space[0] : true)
-        ) {
-          acc = [...acc, [Math.max(space[0] - width, 0), space[0]]];
-        }
+    let availableSpaces = [];
+    let progress = 0;
 
-        // Right
-        if (
-          space[1] < 100 &&
-          (!!spaces[index + 1] ? spaces[index + 1][0] > space[1] : true)
-        ) {
-          acc = [...acc, [space[1], Math.min(space[1] + width, 100)]];
-        }
+    const formated = spaces.map((s) => s[0] + "-" + s[1]);
 
-        return acc;
-      }, []);
+    while (progress < 100) {
+      const start = progress;
+      const end = progress + width;
+
+      if (!formated.includes(start + "-" + end)) {
+        availableSpaces = [
+          ...availableSpaces,
+          [Math.max(start, 0), Math.min(end, 100)],
+        ];
+      }
+
+      progress += width;
+    }
+    
+    return availableSpaces;
   }
 
   init() {
@@ -300,7 +307,7 @@ class Calendar {
   }
 
   setupEvents() {
-    const recursive = (eventId, parentId = null, counter, callback) => {
+    const recursive = (eventId, parentId = null, width, callback) => {
       const event = this.events.get(eventId);
 
       // Ignore if the event has already been traversed
@@ -310,28 +317,26 @@ class Calendar {
 
       this.events.update(eventId, { traversed: true });
 
-      const width = counter > 0 ? 100 / counter : 100;
-
       if (!!parentId) {
         // Only take spaces from events that the current event overlaps
-        const spaces = event.group.reduce((acc, id) => {
+        const spaces = event.group
+        .reduce((acc, id) => {
           const e = this.events.get(id);
           if (!e.abscissa || id === eventId) {
             return acc;
           }
-
+          
           acc = [...acc, e.abscissa];
-
+          
           return acc;
-        }, []);
+        }, [])
+        .sort((s1, s2) => s1[1] - s2[1]);
 
-        const availableSpaces = Calendar.getAvailableSpaces(
-          width,
-          spaces
-        );
-        const abscissa = Calendar.getTheLargestSpace(availableSpaces); // Space occupied by the current event in the abscissa axis
+        const availableSpaces = Calendar.getAvailableSpaces(width, spaces);
 
-        if (!!abscissa) {
+        if (availableSpaces.length > 0) {
+          const abscissa = Calendar.getTheLargestSpace(availableSpaces); // Space occupied by the current event in the abscissa axis
+
           this.events.update(eventId, {
             abscissa,
             traversed: true,
@@ -344,7 +349,6 @@ class Calendar {
         this.events.update(eventId, {
           width,
           abscissa: [0, width], // Default space occupied by the current event in the abscissa axis
-          traversed: true,
         });
       }
 
@@ -352,7 +356,7 @@ class Calendar {
         if (parentId == id) {
           return;
         }
-        recursive(id, eventId, counter, callback);
+        recursive(id, eventId, width, callback);
       });
     };
 
@@ -364,10 +368,11 @@ class Calendar {
           event.group.forEach((id) =>
             this.events.update(id, { traversed: false, abscissa: null })
           );
-          recursive(event.id, null, group.length, callback);
+          const width = group.length > 0 ? 100 / group.length : 100;
+          recursive(event.id, null, width, callback);
         }
       };
-      recursive(event.id, null, 1, callback);
+      recursive(event.id, null, 100, callback);
     });
   }
 
@@ -416,12 +421,40 @@ class Calendar {
         clearInterval(interval);
       }
     }, this.options.animationDelay);
+
+    return this;
   }
 
   resizeEvents() {
     this.events
       .toArray()
       .forEach((event) => event.setElementStyle(event.getDimensions()));
+  }
+
+  generateRandomEvents(nb = 20) {
+    this.events.reset();
+
+    let events = [];
+
+    for (let i = 0; i < nb; i++) {
+      const hour =
+        Math.floor(
+          Math.random() * (this.options.end - this.options.start)
+        ) + this.options.start;
+      const minutes = Math.floor(Math.random() * 60);
+      events = [
+        ...events,
+        {
+          id: i,
+          start: hour + ":" + minutes,
+          duration: Math.floor(Math.random() * (120 - 30) + 10),
+        },
+      ];
+    }
+
+    this.setEvents(events);
+
+    return this;
   }
 }
 
