@@ -9,12 +9,12 @@ window.addEventListener("DOMContentLoaded", function () {
 
   calendar
     // Events is a global variable from calendar/events.js file
-    // .setEvents(events)
+    .setEvents(events)
     /**
      * Uncomment this line and comment the call of "setEvents" method
      * if you want to generate events instead of defining events from calendar/event.js file
      */
-    .generateRandomEvents(50)
+    // .generateRandomEvents(10)
     .init()
     .showEvents();
 
