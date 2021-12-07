@@ -1,14 +1,24 @@
 window.addEventListener("DOMContentLoaded", function () {
   console.time("calendar");
 
-  const calendar = new Calendar("calendar", { start: 9, end: 21, animationDelay: 100 });
+  const calendar = new Calendar("calendar", {
+    start: 9, // From 0 to 24
+    end: 21, // From 0 to 24
+    animationDelay: 10, // ms
+  });
 
   calendar
-    .setEvents(events) // Events is a global variable from events.js file
-    // .generateRandomEvents(10)
+    // Events is a global variable from calendar/events.js file
+    // .setEvents(events)
+    /**
+     * Uncomment this line and comment the call of "setEvents" method
+     * if you want to generate events instead of defining events from calendar/event.js file
+     */
+    .generateRandomEvents(50)
     .init()
     .showEvents();
-  console.log("events :", calendar.events.sorted());
+
+  console.log("Events :", calendar.events.sorted());
 
   console.timeEnd("calendar");
 });

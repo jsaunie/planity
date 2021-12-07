@@ -77,7 +77,7 @@ class Event {
     }
 
     this.element.style.top = y + "px";
-    this.element.style.left = x + "px";
+    this.element.style.left = x + "%";
     this.element.style.height = height + "%";
     this.element.style.width = width + "%";
 
@@ -85,21 +85,25 @@ class Event {
   }
 
   calcX() {
-    return !!this.abscissa ? (this.abscissa[0] * window.innerWidth) / 100 : 0;
+    return !!this.abscissa ? this.abscissa[0] : 0;
   }
 
-  calcY(start, end) {
+  calcY() {
     return (
-      ((((this.startAt.getHours() - start + this.startAt.getMinutes() / 60) *
+      ((((this.startAt.getHours() -
+        this.options.start +
+        this.startAt.getMinutes() / 60) *
         100) /
-        (end - start)) *
+        (this.options.end - this.options.start)) *
         window.innerHeight) /
       100
     );
   }
 
-  calcHeight(start, end) {
-    return (this.duration * 100) / ((end - start) * 60);
+  calcHeight() {
+    return this.options.end - this.options.start
+      ? (this.duration * 100) / ((this.options.end - this.options.start) * 60)
+      : 100;
   }
 
   setOverlappedEventIds(events) {
@@ -118,10 +122,14 @@ class Event {
   }
 
   getDimensions() {
+    this.x = this.calcX();
+    this.y = this.calcY();
+    this.height = this.calcHeight();
+
     return {
-      x: this.calcX(),
-      y: this.calcY(this.options.start, this.options.end),
-      height: this.calcHeight(this.options.start, this.options.end),
+      x: this.x,
+      y: this.y,
+      height: this.height,
       width: this.width,
     };
   }
@@ -164,23 +172,23 @@ class Events {
       return dictionary;
     }, {});
 
-    const recursive = (eventId, three = [], callback) => {
+    const recursive = (eventId, tree = [], callback) => {
       let event = this.get(eventId);
 
-      if (three.includes(eventId) || event.child) {
+      if (tree.includes(eventId) || event.child) {
         return event.overlappedEventIds;
       }
 
-      three = [...three, eventId];
+      tree = [...tree, eventId];
 
       let group = event.overlappedEventIds
         .reduce(
           (acc, id) => {
-            if (three.includes(id)) {
+            if (tree.includes(id)) {
               return acc;
             }
 
-            acc = [...acc, ...recursive(id, three, callback)];
+            acc = [...acc, ...recursive(id, tree, callback)];
 
             this.update(id, { child: true });
 
@@ -263,9 +271,9 @@ class Calendar {
    * @return {number[]} - [start, end]
    */
   static getTheLargestSpace(spaces = []) {
-    return (spaces.length > 1
-      ? spaces.sort((s1, s2) => s1[1] - s2[1]) // ASC
-      : spaces)[0]; // Take the first
+    return spaces.length
+      ? spaces.sort((s1, s2) => s1[1] - s2[1])[0] // ASC
+      : []; // Take the first
   }
 
   /**
@@ -283,7 +291,7 @@ class Calendar {
 
     while (progress < 100) {
       const start = progress;
-      const end = progress + width;
+      const end = Math.min(progress + width, 100);
 
       if (!formated.includes(start + "-" + end)) {
         availableSpaces = [
@@ -294,7 +302,7 @@ class Calendar {
 
       progress += width;
     }
-    
+
     return availableSpaces;
   }
 
@@ -319,18 +327,18 @@ class Calendar {
 
       if (!!parentId) {
         // Only take spaces from events that the current event overlaps
-        const spaces = event.group
-        .reduce((acc, id) => {
-          const e = this.events.get(id);
-          if (!e.abscissa || id === eventId) {
+        const spaces = event.overlappedEventIds
+          .reduce((acc, id) => {
+            const e = this.events.get(id);
+            if (!e.abscissa || id === eventId) {
+              return acc;
+            }
+
+            acc = [...acc, e.abscissa];
+
             return acc;
-          }
-          
-          acc = [...acc, e.abscissa];
-          
-          return acc;
-        }, [])
-        .sort((s1, s2) => s1[1] - s2[1]);
+          }, [])
+          .sort((s1, s2) => s1[1] - s2[1]);
 
         const availableSpaces = Calendar.getAvailableSpaces(width, spaces);
 
@@ -343,7 +351,7 @@ class Calendar {
             width,
           });
         } else {
-          callback(eventId);
+          return callback();
         }
       } else {
         this.events.update(eventId, {
@@ -361,16 +369,15 @@ class Calendar {
     };
 
     this.events.sorted().forEach((event) => {
-      let group = [event.id];
-      let callback = (eventId) => {
-        if (!group.includes(eventId)) {
-          group = [...group, eventId];
-          event.group.forEach((id) =>
-            this.events.update(id, { traversed: false, abscissa: null })
-          );
-          const width = group.length > 0 ? 100 / group.length : 100;
-          recursive(event.id, null, width, callback);
-        }
+      let counter = 1;
+      let callback = () => {
+        // Reset the whole tree
+        event.group.forEach((id) =>
+          this.events.update(id, { traversed: false, abscissa: null })
+        );
+        counter++;
+        const width = 100 / counter;
+        recursive(event.id, null, width, callback);
       };
       recursive(event.id, null, 100, callback);
     });
@@ -408,6 +415,9 @@ class Calendar {
 
     let interval = setInterval(() => {
       const event = events[i];
+      if (!event) {
+        return;
+      }
       const element = event.createElement();
 
       event.setElementStyle(event.getDimensions());
@@ -431,16 +441,15 @@ class Calendar {
       .forEach((event) => event.setElementStyle(event.getDimensions()));
   }
 
-  generateRandomEvents(nb = 20) {
+  generateRandomEvents(nb = 10) {
     this.events.reset();
 
     let events = [];
 
     for (let i = 0; i < nb; i++) {
       const hour =
-        Math.floor(
-          Math.random() * (this.options.end - this.options.start)
-        ) + this.options.start;
+        Math.floor(Math.random() * (this.options.end - this.options.start)) +
+        this.options.start;
       const minutes = Math.floor(Math.random() * 60);
       events = [
         ...events,
