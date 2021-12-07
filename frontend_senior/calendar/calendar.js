@@ -107,14 +107,17 @@ class Event {
   }
 
   setOverlappedEventIds(events) {
-    const overlapped = events
-      .filter(
-        (e) =>
-          e.id !== this.id &&
-          ((this.startAt >= e.startAt && this.startAt < e.endAt) || // Current event starts before e and ends after e
-            (e.startAt >= this.startAt && e.startAt < this.endAt)) // e starts before current event ends
-      )
-      .map((e) => e.id);
+    let overlapped = [];
+
+    events.forEach((e) => {
+      if (
+        e.id !== this.id &&
+        ((this.startAt >= e.startAt && this.startAt < e.endAt) || // Current event starts before e and ends after e
+          (e.startAt >= this.startAt && e.startAt < this.endAt)) // e starts before current event ends
+      ) {
+        overlapped = [...overlapped, e.id];
+      }
+    });
 
     this.overlappedEventIds = [...overlapped];
 
@@ -172,10 +175,10 @@ class Events {
       return dictionary;
     }, {});
 
-    const recursive = (eventId, tree = [], callback) => {
+    const recursive = (eventId, tree = []) => {
       let event = this.get(eventId);
 
-      if (tree.includes(eventId) || event.child) {
+      if (event.child) {
         return event.overlappedEventIds;
       }
 
@@ -185,10 +188,11 @@ class Events {
         .reduce(
           (acc, id) => {
             if (tree.includes(id)) {
+              // Ignore if id iis already in the tree
               return acc;
             }
 
-            acc = [...acc, ...recursive(id, tree, callback)];
+            acc = [...acc, ...recursive(id, tree)];
 
             this.update(id, { child: true });
 
@@ -198,9 +202,7 @@ class Events {
         )
         .filter((value, index, self) => self.indexOf(value) === index); // Filter by unique value
 
-      callback(event.overlappedEventIds.length);
-
-      this.update(event.id, { group });
+      this.update(eventId, { group });
 
       return group;
     };
@@ -212,15 +214,7 @@ class Events {
         return;
       }
 
-      let maxEvents = event.overlappedEventIds.length;
-
-      recursive(
-        event.id,
-        [],
-        (count) => (maxEvents = count > maxEvents ? count : maxEvents)
-      );
-
-      this.update(event.id, { maxEvents });
+      recursive(event.id);
     });
 
     return this;
@@ -279,11 +273,25 @@ class Calendar {
   /**
    * Get available spaces between each space
    *
+   * @param {Event} event
    * @param {number} width
-   * @param {number[][]} spaces - [id, start, end][]
    * @return {number[][]} - [start, end][]
    */
-  static getAvailableSpaces(width, spaces) {
+  getAvailableSpaces(event, width) {
+    // Only take spaces from events that the current event overlaps
+    const spaces = event.overlappedEventIds
+      .reduce((acc, id) => {
+        const e = this.events.get(id);
+        if (!e.abscissa) {
+          return acc;
+        }
+
+        acc = [...acc, e.abscissa];
+
+        return acc;
+      }, [])
+      .sort((s1, s2) => s1[1] - s2[1]);
+
     let availableSpaces = [];
     let progress = 0;
 
@@ -322,46 +330,28 @@ class Calendar {
       if (!!event.traversed) {
         return;
       }
-
       this.events.update(eventId, { traversed: true });
 
-      if (!!parentId) {
-        // Only take spaces from events that the current event overlaps
-        const spaces = event.overlappedEventIds
-          .reduce((acc, id) => {
-            const e = this.events.get(id);
-            if (!e.abscissa || id === eventId) {
-              return acc;
-            }
-
-            acc = [...acc, e.abscissa];
-
-            return acc;
-          }, [])
-          .sort((s1, s2) => s1[1] - s2[1]);
-
-        const availableSpaces = Calendar.getAvailableSpaces(width, spaces);
+      // Check if parentId is defined or equal to 0, because parentId can be equal to 0
+      if (!!parentId || parentId === 0) {
+        const availableSpaces = this.getAvailableSpaces(event, width);
 
         if (availableSpaces.length > 0) {
-          const abscissa = Calendar.getTheLargestSpace(availableSpaces); // Space occupied by the current event in the abscissa axis
+          // Space occupied by the current event in the abscissa axis
+          const abscissa = Calendar.getTheLargestSpace(availableSpaces);
 
-          this.events.update(eventId, {
-            abscissa,
-            traversed: true,
-            width,
-          });
+          this.events.update(eventId, { abscissa, traversed: true, width });
         } else {
-          return callback();
+          return callback(eventId);
         }
       } else {
-        this.events.update(eventId, {
-          width,
-          abscissa: [0, width], // Default space occupied by the current event in the abscissa axis
-        });
+        // Default space occupied by the current event in the abscissa axis
+        this.events.update(eventId, { width, abscissa: [0, width] });
       }
 
       event.overlappedEventIds.forEach((id) => {
-        if (parentId == id) {
+        // Ignore if the event has already been traversed or if it is the parent
+        if (parentId == id || this.events.get(id).traversed) {
           return;
         }
         recursive(id, eventId, width, callback);
@@ -369,14 +359,14 @@ class Calendar {
     };
 
     this.events.sorted().forEach((event) => {
-      let counter = 1;
+      let divideTheScreenBy = 1; // How much we need to divide the window screen
       let callback = () => {
+        divideTheScreenBy++;
         // Reset the whole tree
-        event.group.forEach((id) =>
-          this.events.update(id, { traversed: false, abscissa: null })
-        );
-        counter++;
-        const width = 100 / counter;
+        event.group.forEach((
+          id // Id of the current event is present in the tree
+        ) => this.events.update(id, { traversed: false, abscissa: null }));
+        const width = 100 / divideTheScreenBy;
         recursive(event.id, null, width, callback);
       };
       recursive(event.id, null, 100, callback);

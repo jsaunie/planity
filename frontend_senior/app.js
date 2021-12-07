@@ -14,7 +14,7 @@ window.addEventListener("DOMContentLoaded", function () {
      * Uncomment this line and comment the call of "setEvents" method
      * if you want to generate events instead of defining events from calendar/event.js file
      */
-    // .generateRandomEvents(10)
+    // .generateRandomEvents(50)
     .init()
     .showEvents();
 
